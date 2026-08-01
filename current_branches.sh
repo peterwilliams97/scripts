@@ -6,10 +6,13 @@
 #
 # <base-branch> defaults to `main` if that ref exists locally, otherwise `master`.
 # The "merged" column is yes/no — yes means the branch's changes are present in
-# <base-branch> via any merge strategy (regular merge OR squash merge). Squash-merge
-# detection works by checking that `git diff <base>...<branch>` is empty (the branch
-# introduces no diff not already in base). Branches equal to <base-branch> show "-".
-# The current branch is marked with "*".
+# <base-branch> via any merge strategy (regular merge OR squash merge). A branch is
+# merged if its tip is an ancestor of <base-branch>; failing that, if the patch-id of
+# its net diff since the merge base matches the patch-id of some commit <base-branch>
+# absorbed since that merge base — which is what a squash merge produces. A squash
+# commit that was hand-edited, or split, has a different patch-id and so reports "no":
+# the check fails closed, never deleting a branch it can't prove is merged. Branches
+# equal to <base-branch> show "-". The current branch is marked with "*".
 #
 # -clean   delete every local branch fully merged into <base-branch>, excluding
 #          <base-branch> and the current branch. Uses `git branch -d` (lowercase),
@@ -32,7 +35,9 @@ for arg in "$@"; do
         -clean)  CLEAN=1 ;;
         -update) UPDATE=1 ;;
         -h|--help)
-            sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's|^# \?||'
+            # -E: BSD sed's BRE has no `\?` quantifier, so `s|^# \?||` would match a
+            # literal `?` and leave every line still prefixed with "# ".
+            sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed -E 's|^# ?||'
             exit 0
             ;;
         -*)
