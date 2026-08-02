@@ -2,7 +2,14 @@
 # current_branches.sh — list local branches of the current repo, ascending by
 # last-commit time, with whether each is fully merged into a named base branch.
 #
-# Usage: ./scripts/current_branches.sh [<base-branch>] [-clean] [-update] [--poll <sec>] [<dir>]
+# Usage: current_branches.sh [<dir>] [<base-branch>] [-clean] [-update] [--poll <sec>]
+#
+# <dir> is the clone to inspect and defaults to `.`. The two positionals are told apart
+# by what they name, not by their order: an argument that is an existing directory is
+# <dir>, anything else is <base-branch>. So `current_branches.sh ~/code/foo` and
+# `current_branches.sh master ~/code/foo` both do what they look like. A base branch
+# whose name collides with a directory in the current directory is the one case the
+# guess gets wrong — pass `--base <branch>` or `-C <dir>` to say which is which.
 #
 # <base-branch> defaults to `main` if that ref exists locally, otherwise `master`.
 # The "merged" column is yes/no — yes means the branch's changes are present in
@@ -31,6 +38,11 @@
 #          file or pipe, iterations are appended with a blank line between them.
 #          Mutually exclusive with -clean and -update — both mutate the repo, and a
 #          mutation on a timer is not something to arm by accident.
+# -C <dir> the clone to inspect, stated explicitly instead of positionally. `--dir` is
+#          a synonym; both accept `-C=<dir>` too.
+# --base <branch>
+#          the base branch, stated explicitly. Use this when the branch name is also a
+#          directory name here, which is the only case the positional guess misreads.
 
 set -euo pipefail
 
@@ -53,6 +65,24 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -poll=*|--poll=*) POLL="${1#*=}" ;;
+        -C|--dir)
+            if [ $# -lt 2 ]; then
+                echo "current_branches.sh: $1 requires a directory argument" >&2
+                exit 2
+            fi
+            REPO_DIR="$2"
+            shift
+            ;;
+        -C=*|--dir=*) REPO_DIR="${1#*=}" ;;
+        --base)
+            if [ $# -lt 2 ]; then
+                echo "current_branches.sh: --base requires a branch argument" >&2
+                exit 2
+            fi
+            BASE_BRANCH="$2"
+            shift
+            ;;
+        --base=*) BASE_BRANCH="${1#*=}" ;;
         -h|--help)
             # -E: BSD sed's BRE has no `\?` quantifier, so `s|^# \?||` would match a
             # literal `?` and leave every line still prefixed with "# ".
@@ -64,13 +94,30 @@ while [ $# -gt 0 ]; do
             exit 2
             ;;
         *)
-            if [ -z "$BASE_BRANCH" ]; then
-                BASE_BRANCH="$1"
-            elif [ -z "$REPO_DIR" ]; then
+            # Positionals are identified by what they name rather than by position: the
+            # old fixed order made `current_branches.sh ~/code/foo` read the path as a
+            # branch and then fail about $PWD, naming a directory the user never typed.
+            if [ -d "$1" ]; then
+                if [ -n "$REPO_DIR" ]; then
+                    echo "current_branches.sh: two directories given: $REPO_DIR and $1" >&2
+                    exit 2
+                fi
                 REPO_DIR="$1"
             else
-                echo "current_branches.sh: extra positional argument: $1" >&2
-                exit 2
+                # `git check-ref-format` rejects a leading `/` and any `.`/`..` component,
+                # so an argument shaped like a path cannot be a branch name — fail as the
+                # missing directory it is instead of deferring to a confusing branch error.
+                case "$1" in
+                    /*|./*|../*|~*)
+                        echo "current_branches.sh: not a directory: $1" >&2
+                        exit 1
+                        ;;
+                esac
+                if [ -n "$BASE_BRANCH" ]; then
+                    echo "current_branches.sh: extra positional argument: $1" >&2
+                    exit 2
+                fi
+                BASE_BRANCH="$1"
             fi
             ;;
     esac
@@ -94,11 +141,17 @@ if [ -n "$POLL" ]; then
     fi
 fi
 
-REPO_DIR="${REPO_DIR:-$PWD}"
+REPO_DIR="${REPO_DIR:-.}"
+if [ ! -d "$REPO_DIR" ]; then
+    echo "current_branches.sh: not a directory: $REPO_DIR" >&2
+    exit 1
+fi
 cd "$REPO_DIR"
 
+# Report $PWD rather than $REPO_DIR: with the default `.` the literal argument says
+# nothing, and an absolute path is what tells you whether you are where you meant to be.
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
-    echo "current_branches.sh: $REPO_DIR is not a git repository" >&2
+    echo "current_branches.sh: $PWD is not a git repository" >&2
     exit 1
 fi
 
@@ -112,7 +165,9 @@ if [ -z "$BASE_BRANCH" ]; then
         exit 1
     fi
 elif ! git show-ref --verify --quiet "refs/heads/$BASE_BRANCH"; then
-    echo "current_branches.sh: branch '$BASE_BRANCH' does not exist locally" >&2
+    # It failed the -d test during parsing, so a mistyped path lands here too — say both
+    # readings are exhausted rather than only the branch one.
+    echo "current_branches.sh: '$BASE_BRANCH' is neither a local branch in $PWD nor a directory" >&2
     exit 1
 fi
 
