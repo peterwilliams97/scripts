@@ -28,7 +28,7 @@ the same command works across every checkout.
 
 | Script | What it does |
 | --- | --- |
-| `current_branches.sh` | Lists local branches oldest-commit-first with a `MERGED` column that catches squash merges, not just fast-forward ancestry. `-clean` deletes the merged ones; `-update` pulls the base branch into every branch. |
+| `current_branches.sh` | Lists local branches oldest-commit-first with a `MERGED` column that catches squash merges, not just fast-forward ancestry. `-clean` deletes the merged ones; `-update` pulls the base branch into every branch; `--poll <sec>` redraws on a timer to watch another process commit. |
 | `recent-files.sh` | Newest *n* files under a root, printed oldest-first with timestamps — "what did I actually touch last session". `-a` includes dotfiles. |
 
 Examples:
@@ -37,6 +37,7 @@ Examples:
 current_branches.sh                    # base branch inferred: main, else master
 current_branches.sh master -clean      # prune everything already squash-merged into master
 current_branches.sh main -update ~/code/papercutsoftware/ipp
+current_branches.sh --poll 5           # redraw every 5s — watch a Claude session commit
 
 recent-files.sh                        # 10 newest files under $PWD
 recent-files.sh ~/code/wpp-transition 30

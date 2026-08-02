@@ -2,7 +2,7 @@
 # current_branches.sh — list local branches of the current repo, ascending by
 # last-commit time, with whether each is fully merged into a named base branch.
 #
-# Usage: ./scripts/current_branches.sh [<base-branch>] [-clean] [-update] [<dir>]
+# Usage: ./scripts/current_branches.sh [<base-branch>] [-clean] [-update] [--poll <sec>] [<dir>]
 #
 # <base-branch> defaults to `main` if that ref exists locally, otherwise `master`.
 # The "merged" column is yes/no — yes means the branch's changes are present in
@@ -22,18 +22,37 @@
 #          Requires a clean working tree. Restores the original branch on
 #          completion. On a per-branch pull failure, aborts the merge and
 #          continues; failures are summarised at the end.
+# --poll <sec>
+#          redraw the table every <sec> seconds until Ctrl-C, for watching another
+#          process (a Claude Code session, a long rebase) move branches around. Each
+#          iteration re-reads refs from disk and re-runs the merged check, so a new
+#          branch or a fresh commit shows up on the next tick. On a terminal the
+#          screen and scrollback are cleared before each redraw; when redirected to a
+#          file or pipe, iterations are appended with a blank line between them.
+#          Mutually exclusive with -clean and -update — both mutate the repo, and a
+#          mutation on a timer is not something to arm by accident.
 
 set -euo pipefail
 
 CLEAN=0
 UPDATE=0
+POLL=""
 REPO_DIR=""
 BASE_BRANCH=""
 
-for arg in "$@"; do
-    case "$arg" in
+while [ $# -gt 0 ]; do
+    case "$1" in
         -clean)  CLEAN=1 ;;
         -update) UPDATE=1 ;;
+        -poll|--poll)
+            if [ $# -lt 2 ]; then
+                echo "current_branches.sh: $1 requires a seconds argument" >&2
+                exit 2
+            fi
+            POLL="$2"
+            shift
+            ;;
+        -poll=*|--poll=*) POLL="${1#*=}" ;;
         -h|--help)
             # -E: BSD sed's BRE has no `\?` quantifier, so `s|^# \?||` would match a
             # literal `?` and leave every line still prefixed with "# ".
@@ -41,21 +60,39 @@ for arg in "$@"; do
             exit 0
             ;;
         -*)
-            echo "current_branches.sh: unknown switch: $arg" >&2
+            echo "current_branches.sh: unknown switch: $1" >&2
             exit 2
             ;;
         *)
             if [ -z "$BASE_BRANCH" ]; then
-                BASE_BRANCH="$arg"
+                BASE_BRANCH="$1"
             elif [ -z "$REPO_DIR" ]; then
-                REPO_DIR="$arg"
+                REPO_DIR="$1"
             else
-                echo "current_branches.sh: extra positional argument: $arg" >&2
+                echo "current_branches.sh: extra positional argument: $1" >&2
                 exit 2
             fi
             ;;
     esac
+    shift
 done
+
+if [ -n "$POLL" ]; then
+    case "$POLL" in
+        ''|*[!0-9]*)
+            echo "current_branches.sh: --poll wants a whole number of seconds, got: $POLL" >&2
+            exit 2
+            ;;
+    esac
+    if [ "$POLL" -lt 1 ]; then
+        echo "current_branches.sh: --poll interval must be at least 1 second" >&2
+        exit 2
+    fi
+    if [ "$CLEAN" = 1 ] || [ "$UPDATE" = 1 ]; then
+        echo "current_branches.sh: --poll cannot be combined with -clean or -update" >&2
+        exit 2
+    fi
+fi
 
 REPO_DIR="${REPO_DIR:-$PWD}"
 cd "$REPO_DIR"
@@ -181,20 +218,49 @@ if [ "$CLEAN" = 1 ]; then
     echo
 fi
 
-CURRENT=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+# print_table — one rendering of the branch listing. Factored out of the main body so
+# --poll can call it repeatedly; everything it reads (HEAD, refs, merged status) is
+# re-derived per call rather than captured once, which is the whole point of polling.
+print_table() {
+    local current date branch merged mark
+    current=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 
-printf "%-25s %-50s %-8s %s\n" "LAST_COMMIT" "BRANCH" "MERGED" ""
-while IFS='|' read -r date branch; do
-    if [ "$branch" = "$BASE_BRANCH" ]; then
-        merged="-"
-    elif is_merged "$branch" "$BASE_BRANCH"; then
-        merged="yes"
-    else
-        merged="no"
+    printf "%-25s %-50s %-8s %s\n" "LAST_COMMIT" "BRANCH" "MERGED" ""
+    while IFS='|' read -r date branch; do
+        if [ "$branch" = "$BASE_BRANCH" ]; then
+            merged="-"
+        elif is_merged "$branch" "$BASE_BRANCH"; then
+            merged="yes"
+        else
+            merged="no"
+        fi
+        mark=""
+        [ "$branch" = "$current" ] && mark="*"
+        printf "%-25s %-50s %-8s %s\n" "$date" "$branch" "$merged" "$mark"
+    done < <(git for-each-ref refs/heads/ \
+        --sort=committerdate \
+        --format='%(committerdate:iso-strict)|%(refname:short)')
+}
+
+if [ -z "$POLL" ]; then
+    print_table
+    exit 0
+fi
+
+# Poll loop. `\033[3J` drops the scrollback too — without it every redraw leaves a
+# stale copy of the table above the visible one, which is exactly the confusion this
+# mode is meant to remove. Skipped when stdout isn't a terminal so a redirected run
+# stays greppable instead of accumulating escape sequences.
+while :; do
+    if [ -t 1 ]; then
+        printf '\033[H\033[2J\033[3J'
     fi
-    mark=""
-    [ "$branch" = "$CURRENT" ] && mark="*"
-    printf "%-25s %-50s %-8s %s\n" "$date" "$branch" "$merged" "$mark"
-done < <(git for-each-ref refs/heads/ \
-    --sort=committerdate \
-    --format='%(committerdate:iso-strict)|%(refname:short)')
+    printf '==> %s | base=%s | %s | every %ss (Ctrl-C to stop)\n\n' \
+        "$(git rev-parse --show-toplevel)" \
+        "$BASE_BRANCH" \
+        "$(date '+%H:%M:%S')" \
+        "$POLL"
+    print_table
+    [ -t 1 ] || echo
+    sleep "$POLL"
+done
