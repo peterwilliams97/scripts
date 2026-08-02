@@ -1,0 +1,5 @@
+# Claude Code's per-machine settings — approved tool permissions, local paths, and other
+# state specific to this checkout and this user. `settings.json` (shared config) is
+# committable; the `.local.` variant never is. Also covered by ~/.config/git/ignore on
+# this machine, repeated here so the rule travels with the repo to other clones.
+.claude/settings.local.json
