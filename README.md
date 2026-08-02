@@ -35,14 +35,14 @@ Examples:
 
 ```sh
 current_branches.sh                    # $PWD, base branch inferred: main, else master
-current_branches.sh ~/code/personal/solo-print         # another clone, base inferred
+current_branches.sh ~/code/personal/pet_project         # another clone, base inferred
 current_branches.sh master -clean      # prune everything already squash-merged into master
-current_branches.sh main -update ~/code/papercutsoftware/ipp
+current_branches.sh main -update ~/code/work/stuff
 current_branches.sh --poll 5           # redraw every 5s — watch a Claude session commit
 
 recent-files.sh                        # 10 newest files under $PWD
 recent-files.sh ~/code/wpp-transition 30
-recent-files.sh --poll 3 ~/code/papercutsoftware/ipp 20   # watch a session write files
+recent-files.sh --poll 3 ~/code/yakka/grind 20   # watch a session write files
 ```
 
 ## Install
